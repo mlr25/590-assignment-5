@@ -1,3 +1,4 @@
+# Team Members: Madison Roberts and Ashley Price
 defmodule WaitingRoom do
   use GenServer
   
