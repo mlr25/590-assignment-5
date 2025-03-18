@@ -1,115 +1,130 @@
-# team members: Madison Roberts and Ashley Price 
-
-defmodule SleepingBarber do
-  def start do
-    # Start the barber process
-    IO.puts("Starting barber process...")
-    barber_pid = spawn_link(__MODULE__, :barber_loop, [self()])
-
-    # Start the waiting room process
-    IO.puts("Starting waiting room process...")
-    waiting_room_pid = spawn_link(__MODULE__, :waiting_room_loop, [barber_pid, []])
-
-    # Start the receptionist process
-    IO.puts("Starting receptionist process...")
-    receptionist_pid = spawn_link(__MODULE__, :receptionist_loop, [waiting_room_pid])
-
-    # Start the customer spawner process
-    IO.puts("Starting customer spawner process...")
-    customer_spawner(receptionist_pid)
+defmodule WaitingRoom do
+  use GenServer
+  
+  @max_size 6
+  
+  def start_link(_) do
+    GenServer.start_link(__MODULE__, [], name: __MODULE__)
+  end
+  
+  def has_space? do
+    GenServer.call(__MODULE__, :has_space)
+  end
+  
+  def add_customer(customer_pid) do
+    GenServer.cast(__MODULE__, {:add_customer, customer_pid})
+  end
+  
+  def get_next_customer do
+    GenServer.call(__MODULE__, :get_next_customer)
   end
 
-  def barber_loop(manager) do
-    receive do
-      {:cut_hair, customer} ->
-        IO.puts("Barber is cutting hair...")
-        :timer.sleep(:rand.uniform(3000))  # Simulate cutting hair
-        send(customer, :done)
-        send(manager, :next_customer)
-        barber_loop(manager)
-
-    after 5000 ->  # Wait if no customers
-      IO.puts("Barber is sleeping...")
-      barber_loop(manager)
-    end
+  def init(_) do
+    {:ok, []}
   end
 
-  def waiting_room_loop(barber, queue) do
-    IO.puts("Waiting room loop is running... Current queue length: #{length(queue)}")
-    receive do
-      {:arrive, customer} ->
-        IO.puts("Customer arrived at waiting room...")
-        case length(queue) do
-          x when x < 6 ->  # If space in waiting room
-            IO.puts("Customer added to waiting room")
-            send(barber, {:cut_hair, customer})
-            waiting_room_loop(barber, queue ++ [customer])
-
-          _ ->  # If no space
-            IO.puts("Waiting room full, customer leaving")
-            send(customer, :full)
-            waiting_room_loop(barber, queue)
-        end
-
-      :next_customer ->
-        IO.puts("Processing next customer in waiting room...")
-        case queue do
-          [next | rest] ->
-            send(barber, {:cut_hair, next})
-            waiting_room_loop(barber, rest)
-          [] ->
-            waiting_room_loop(barber, [])
-        end
-    end
+  def handle_call(:has_space, _from, state) do
+    {:reply, length(state) < @max_size, state}
   end
-
-  def receptionist_loop(waiting_room) do
-    IO.puts("Receptionist loop is running... Waiting for customers...")
-    receive do
-      :ready ->
-        IO.puts("Receptionist is ready to receive customers...")
-        send(waiting_room, :ready)  # Notify waiting room it is ready
-        loop_with_ready(waiting_room)
-    end
+  
+  def handle_call(:get_next_customer, _from, [next | rest]) do
+    {:reply, next, rest}
   end
-
-  defp loop_with_ready(waiting_room) do
-    receive do
-      {:new_customer, customer} ->
-        IO.puts("Receptionist received customer, sending to waiting room...")
-        send(waiting_room, {:arrive, customer})  # Send the customer to waiting room
-        loop_with_ready(waiting_room)
-    end
+  def handle_call(:get_next_customer, _from, []), do: {:reply, :empty, []}
+  
+  def handle_cast({:add_customer, customer_pid}, state) when length(state) < @max_size do
+    IO.puts("WaitingRoom: Customer #{inspect customer_pid} added to queue.")
+    {:noreply, state ++ [customer_pid]}
   end
-
-  def customer_spawner(receptionist) do
-    spawn(fn ->
-      customer_spawner_loop(receptionist)
-    end)
-  end
-
-  defp customer_spawner_loop(receptionist) do
-    IO.puts("Spawning a new customer...")
-    :timer.sleep(:rand.uniform(5000))  # Wait for random time before sending customer
-
-    # Wait for the receptionist to be ready
-    send(receptionist, :ready)  # Signal that we are ready to send a customer
-    receive do
-      :ready ->  # Once the receptionist is ready, send the customer
-        customer_pid = spawn(__MODULE__, :customer_loop, [])
-        IO.puts("Customer spawned, sending to receptionist...")
-        send(receptionist, {:new_customer, customer_pid})  # Send customer to receptionist
-        customer_spawner_loop(receptionist)  # Recursively spawn new customers
-    end
-  end
-
-  def customer_loop do
-    receive do
-      :done -> IO.puts("Customer got a haircut and leaves.")
-      :full -> IO.puts("Customer leaves because waiting room is full.")
-    end
+  def handle_cast({:add_customer, _}, state) do
+    IO.puts("WaitingRoom: Queue full, rejecting customer.")
+    {:noreply, state}
   end
 end
 
-# Start the simulation
-SleepingBarber.start()
+# Receptionist Process
+defmodule Receptionist do
+  use GenServer
+
+  def start_link(_) do
+    GenServer.start_link(__MODULE__, %{waiting_room: WaitingRoom}, name: __MODULE__)
+  end
+
+  def new_customer(customer_pid) do
+    IO.puts("Receptionist: Greeting customer #{inspect customer_pid}.")
+    GenServer.cast(__MODULE__, {:new_customer, customer_pid})
+  end
+
+  def init(state), do: {:ok, state}
+
+  def handle_cast({:new_customer, customer_pid}, state) do
+    if WaitingRoom.has_space?() do
+      IO.puts("Receptionist: Sending customer #{inspect customer_pid} to waiting room.")
+      WaitingRoom.add_customer(customer_pid)
+    else
+      IO.puts("Receptionist: Customer #{inspect customer_pid} turned away, no space.")
+    end
+    {:noreply, state}
+  end
+end
+
+# Barber Process
+defmodule Barber do
+  use GenServer
+
+  def start_link(_) do
+    GenServer.start_link(__MODULE__, %{waiting_room: WaitingRoom}, name: __MODULE__)
+  end
+
+  def init(state) do
+    Process.send_after(self(), :next_customer, 1000)
+    {:ok, state}
+  end
+
+  def handle_info(:next_customer, state) do
+    case WaitingRoom.get_next_customer() do
+      :empty -> 
+        IO.puts("Barber: No customers, going to sleep.")
+      customer -> 
+        IO.puts("Barber: Cutting hair for #{inspect customer}...")
+        :timer.sleep(:rand.uniform(3000)) # Random haircut time
+        IO.puts("Barber: Finished haircut for #{inspect customer}.")
+    end
+    Process.send_after(self(), :next_customer, 1000)
+    {:noreply, state}
+  end
+end
+
+# Customer Process
+defmodule Customer do
+  def start_link(id) do
+    spawn(fn -> arrive(id) end)
+  end
+
+  defp arrive(id) do
+    IO.puts("Customer #{id} arriving at shop.")
+    Receptionist.new_customer(self())
+  end
+end
+
+# Simulation
+defmodule BarberShop do
+  def start do
+    {:ok, _} = WaitingRoom.start_link([])
+    {:ok, _} = Receptionist.start_link([])
+    {:ok, _} = Barber.start_link([])
+    spawn(&generate_customers/0)
+    :timer.sleep(:infinity) # KEEP MAIN PROCESS ALIVE
+  end
+  
+  defp generate_customers do
+    Stream.iterate(1, &(&1 + 1))
+    |> Enum.each(fn id ->
+      :timer.sleep(:rand.uniform(2000)) # Random arrival times
+      Customer.start_link(id)
+    end)
+  end
+end
+
+# Start Simulation
+BarberShop.start()

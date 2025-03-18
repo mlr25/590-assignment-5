@@ -5,11 +5,29 @@ Madison Roberts and Ashley Price
 
 ## Design Rationale 
 
-Barber: the barber process handles haircuts. It sleeps when no customers are available and wakes up when a customer arrives. This process is designed to be hot-swappable, allowing changes in haircut duration or behavior without restarting the system. 
-Waiting room: A FIFO queue is used to manage waiting customers, ensuring fairness. Queue size limited to 6. 
-Receptionist: greets customers and either sends them to the waiting room or turns them away if full. 
-Customer Processes: Each customer is a separate process that waits for service or leaves if the room is full. .The custumer code is hot-swappable, so new customers always use the latest. 
-Customer spawner: simulates random customers arrivals by spawning new customer processes at random intervals 
+This project simulates the Sleeping Barber Problem using Elixir and its concurrency model. The system consists of several components: a waiting room, a receptionist, a barber, and customers. It demonstrates how multiple processes can interact asynchronously to simulate a real-world barber shop scenario.
+
+WaitingRoom (GenServer):
+- Manages the queue of customers waiting for a haircut.
+- Supports checking if space is available, adding customers, and retrieving the next customer.
+- The waiting room has a maximum capacity (@max_size).
+
+Receptionist (GenServer):
+- Greets customers and directs them to the waiting room if there is space.
+- Rejects customers if the waiting room is full.
+
+Barber (GenServer):
+- Cuts hair for one customer at a time.
+- Goes to sleep if there are no customers in the waiting room.
+- Checks the waiting room periodically to see if there are customers to serve.
+
+Customer (Process):
+- Simulates customers arriving at the barber shop.
+- Each customer is represented by a unique id and arrives at random intervals.
+
+BarberShop (Main Simulation):
+- Starts all necessary processes (WaitingRoom, Receptionist, and Barber).
+- Generates customers at random intervals to simulate customer arrivals.
 
 ## Running the Program 
 
